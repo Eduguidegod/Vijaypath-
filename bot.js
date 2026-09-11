@@ -111,7 +111,7 @@ function getMainMenu(lang) {
     ]).resize();
 }
 
-// 1. /start Command & Referral Handling (Error Handled)
+// 1. /start Command & Referral Handling
 bot.start(async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -186,7 +186,7 @@ bot.hears(['🌐 Change Language', '🌐 भाषा बदलें', '🌐 �
     );
 });
 
-// Join & Razorpay Order Creation
+// Join & Razorpay Dynamic Payment Link Generation via API
 bot.hears(/Join/i, async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -197,26 +197,39 @@ bot.hears(/Join/i, async (ctx) => {
             return ctx.reply(lang === 'gu' ? "તમે પહેલેથી જ Active Member છો!" : "You are already an Active Member!");
         }
 
-        await razorpay.orders.create({
-            amount: 10000,
+        // Razorpay Payment Link API દ્વારા ડાયનેમિક લિંક જનરેટ કરવી
+        const paymentLinkResponse = await razorpay.paymentLink.create({
+            amount: 10000, // ₹100 in paisa
             currency: 'INR',
-            receipt: 'rcpt_' + userId + '_' + Date.now(),
-            notes: { userId: userId }
+            accept_partial: false,
+            description: 'Telegram Bot Membership Fee',
+            customer: {
+                name: ctx.from.first_name || 'User',
+                email: 'support@vijaypath.com',
+                contact: '9999999999'
+            },
+            notify: { sms: false, email: false },
+            reminder_enable: false,
+            notes: {
+                userId: userId
+            },
+            callback_url: 'https://t.me/Vijaypathj_bot',
+            callback_method: 'get'
         });
-        
+
         return ctx.reply(
             t[lang].joinPrompt,
             Markup.inlineKeyboard([
-                [Markup.button.url(t[lang].payBtn, 'https://rzp.io/rzp/Dj8c5zXx')]
+                [Markup.button.url(t[lang].payBtn, paymentLinkResponse.short_url)]
             ])
         );
     } catch (err) {
-        console.error("Error in Join command:", err);
+        console.error("Error in Join command / Payment Link creation:", err);
         return ctx.reply("Payment initialization failed. Please try again later.");
     }
 });
 
-// My Referrals / Refer Menu
+// My Referrals / Refer Menu (Using fixed bot username @Vijaypathj_bot)
 bot.hears(/Refer/i, async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -224,7 +237,7 @@ bot.hears(/Refer/i, async (ctx) => {
         if (!user) return ctx.reply("Please send /start first.");
 
         const lang = user.lang;
-        const myReferralLink = `https://t.me/${bot.botInfo.username}?start=${user.referralId}`;
+        const myReferralLink = `https://t.me/Vijaypathj_bot?start=${user.referralId}`;
         
         const totalRef = await Referral.countDocuments({ referrerId: userId });
         
@@ -355,7 +368,7 @@ app.use(async (req, res, next) => {
     }
 });
 
-// Razorpay Webhook Endpoint
+// Razorpay Webhook Endpoint (Supports Payment Link Events)
 app.post('/razorpay-webhook', async (req, res) => {
     try {
         const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
@@ -368,10 +381,15 @@ app.post('/razorpay-webhook', async (req, res) => {
 
         const event = req.body.event;
 
-        if (event === 'payment.captured') {
-            const paymentEntity = req.body.payload.payment.entity;
-            const paymentId = paymentEntity.id;
-            const userId = paymentEntity.notes.userId;
+        // Payment Link Paid event અથવા Payment Captured event બંનેને સપોર્ટ કરવા માટે
+        if (event === 'payment_link.paid' || event === 'payment.captured') {
+            const entity = req.body.payload.payment_link ? req.body.payload.payment_link.entity : req.body.payload.payment.entity;
+            const paymentId = entity.id;
+            const userId = entity.notes ? entity.notes.userId : null;
+
+            if (!userId) {
+                return res.status(200).json({ status: 'No User ID found in notes' });
+            }
 
             const existingTx = await Transaction.findOne({ paymentId });
             if (existingTx) {
@@ -379,37 +397,35 @@ app.post('/razorpay-webhook', async (req, res) => {
             }
             await Transaction.create({ paymentId });
 
-            if (userId) {
-                const user = await User.findOne({ userId });
-                if (user) {
-                    user.active = true;
+            const user = await User.findOne({ userId });
+            if (user) {
+                user.active = true;
 
-                    if (user.referrer) {
-                        const referrerUser = await User.findOne({ userId: user.referrer });
-                        if (referrerUser) {
-                            referrerUser.balance += 50;
-                            referrerUser.walletLedger.push({
-                                type: 'REFERRAL_REWARD',
-                                amount: 50,
-                                desc: `Referral bonus from User ${userId}`,
-                                time: new Date()
-                            });
-                            await referrerUser.save();
+                if (user.referrer) {
+                    const referrerUser = await User.findOne({ userId: user.referrer });
+                    if (referrerUser) {
+                        referrerUser.balance += 50;
+                        referrerUser.walletLedger.push({
+                            type: 'REFERRAL_REWARD',
+                            amount: 50,
+                            desc: `Referral bonus from User ${userId}`,
+                            time: new Date()
+                        });
+                        await referrerUser.save();
 
-                            bot.telegram.sendMessage(
-                                user.referrer,
-                                `🎉 Referral Reward! Your referred user made a successful payment. +₹50 added to your wallet!`
-                            ).catch((e) => console.error("Notification error:", e));
-                        }
+                        bot.telegram.sendMessage(
+                            user.referrer,
+                            `🎉 Referral Reward! Your referred user made a successful payment. +₹50 added to your wallet!`
+                        ).catch((e) => console.error("Notification error:", e));
                     }
-
-                    await user.save();
-
-                    bot.telegram.sendMessage(
-                        userId,
-                        `✅ Payment Successful! Your Membership is now Active.`
-                    ).catch((e) => console.error("Notification error:", e));
                 }
+
+                await user.save();
+
+                bot.telegram.sendMessage(
+                    userId,
+                    `✅ Payment Successful! Your Membership is now Active.`
+                ).catch((e) => console.error("Notification error:", e));
             }
         }
 
@@ -431,3 +447,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
+    
