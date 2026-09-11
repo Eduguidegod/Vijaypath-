@@ -9,6 +9,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID; // 👈 Environment માંથી ફેચ થશે
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
@@ -246,11 +247,14 @@ bot.command('withdraw', (ctx) => {
     return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
 });
 
-// ADMIN PANEL / COMMAND FEATURE
+// SECURE ADMIN PANEL / COMMAND FEATURE (Environment variable આધારિત સિક્યોરિટી)
 bot.command('admin', (ctx) => {
     const userId = ctx.from.id.toString();
-    
-    // બોટ ચલાવનાર મુખ્ય એડમીન (તમે તમારો ટેલિગ્રામ User ID અહીં ચેક કરી શકો છો, અથવા હાલ પૂરતું દરેક માટે ખુલ્લું રાખી શકાય)
+
+    if (userId !== ADMIN_TELEGRAM_ID) {
+        return ctx.reply("⛔ You are not authorized to use the admin panel.");
+    }
+
     const totalUsers = Object.keys(db.users).length;
     const activeMembers = Object.values(db.users).filter(u => u.active).length;
     const totalPayments = Object.keys(db.transactions).length;
@@ -341,4 +345,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-            
+                                
