@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-// Environment Variables માંથી વિગતો મેળવવી (Render Environment માં સેટ કરેલ હોવી જોઈએ)
+// Environment Variables માંથી વિગતો મેળવવી
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
@@ -19,7 +19,7 @@ const razorpay = new Razorpay({
     key_secret: RAZORPAY_KEY_SECRET
 });
 
-// Mock Database (પ્રોડક્શનમાં MongoDB કે PostgreSQL વાપરવું)
+// Mock Database
 const db = {
     users: {},        // userId -> { lang, balance, active, referrer, referralId, withdrawn }
     referrals: {},    // referredId -> referrerId
@@ -87,7 +87,7 @@ function getMainMenu(lang) {
 // 1. /start Command & Referral Handling
 bot.start(async (ctx) => {
     const userId = ctx.from.id.toString();
-    const payload = ctx.startPayload; // Referral ID if passed
+    const payload = ctx.startPayload;
 
     if (!db.users[userId]) {
         db.users[userId] = {
@@ -100,7 +100,6 @@ bot.start(async (ctx) => {
         };
         db.walletLedger[userId] = [];
 
-        // Handle Referral Link Tracking (Duplicate Referral Protection)
         if (payload && payload !== db.users[userId].referralId) {
             const referrerId = Object.keys(db.users).find(
                 id => db.users[id].referralId === payload
@@ -111,7 +110,6 @@ bot.start(async (ctx) => {
             }
         }
 
-        // Show Language Selection for new user
         return ctx.reply(
             t.en.welcome,
             Markup.inlineKeyboard([
@@ -163,7 +161,7 @@ bot.hears(/Join/i, async (ctx) => {
 
     try {
         const order = await razorpay.orders.create({
-            amount: 10000, // ₹100 in paise
+            amount: 10000,
             currency: 'INR',
             receipt: 'rcpt_' + userId + '_' + Date.now(),
             notes: { userId: userId }
@@ -248,7 +246,7 @@ bot.command('withdraw', (ctx) => {
     return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
 });
 
-// 8, 9, 10, 12, 16. Razorpay Webhook for Payment Verification & Duplicate Protection
+// Razorpay Webhook
 app.post('/razorpay-webhook', async (req, res) => {
     const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
     shasum.update(JSON.stringify(req.body));
@@ -265,21 +263,18 @@ app.post('/razorpay-webhook', async (req, res) => {
         const paymentId = paymentEntity.id;
         const userId = paymentEntity.notes.userId;
 
-        // 16. Duplicate Payment Protection
         if (db.transactions[paymentId]) {
             return res.status(200).json({ status: 'Already Processed' });
         }
         db.transactions[paymentId] = true;
 
         if (userId && db.users[userId]) {
-            // 9 & 10. Membership Active & Referral Reward (+₹50)
             db.users[userId].active = true;
 
             const referrerId = db.users[userId].referrer;
             if (referrerId && db.users[referrerId]) {
                 db.users[referrerId].balance += 50;
 
-                // 18. Wallet Ledger Entry
                 db.walletLedger[referrerId].push({
                     type: 'REFERRAL_REWARD',
                     amount: 50,
@@ -287,14 +282,12 @@ app.post('/razorpay-webhook', async (req, res) => {
                     time: new Date()
                 });
 
-                // Notify Referrer via Telegram Bot
                 bot.telegram.sendMessage(
                     referrerId,
                     `🎉 Referral Reward! Your referred user made a successful payment. +₹50 added to your wallet!`
                 ).catch(() => {});
             }
 
-            // Notify User
             bot.telegram.sendMessage(
                 userId,
                 `✅ Payment Successful! Your Membership is now Active.`
@@ -305,14 +298,11 @@ app.post('/razorpay-webhook', async (req, res) => {
     res.json({ status: 'ok' });
 });
 
-// Server Start (Render port support)
+// Server Start (Without bot.launch to prevent 409 Conflict)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    bot.launch();
 });
 
-// Enable graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-            
