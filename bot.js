@@ -3,13 +3,52 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 
 // Environment Variables માંથી વિગતો મેળવવી
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID; // 👈 Environment માંથી ફેચ થશે
+const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID;
+const MONGODB_URI = process.env.MONGODB_URI;
+
+// MongoDB Atlas કનેક્શન (Permanent Database)
+mongoose.connect(MONGODB_URI)
+    .then(() => console.log('✅ Connected to MongoDB Atlas successfully!'))
+    .catch(err => console.error('❌ MongoDB connection error:', err));
+
+// Mongoose Schemas & Models (ડેટા કાયમ માટે સેવ કરવા માટે)
+const ledgerSchema = new mongoose.Schema({
+    type: String,
+    amount: Number,
+    desc: String,
+    time: { type: Date, default: Date.now }
+});
+
+const userSchema = new mongoose.Schema({
+    userId: { type: String, required: true, unique: true },
+    lang: { type: String, default: 'en' },
+    balance: { type: Number, default: 0 },
+    withdrawn: { type: Number, default: 0 },
+    active: { type: Boolean, default: false },
+    referrer: { type: String, default: null },
+    referralId: { type: String, required: true },
+    walletLedger: [ledgerSchema]
+});
+
+const referralSchema = new mongoose.Schema({
+    referredId: { type: String, required: true, unique: true },
+    referrerId: { type: String, required: true }
+});
+
+const transactionSchema = new mongoose.Schema({
+    paymentId: { type: String, required: true, unique: true }
+});
+
+const User = mongoose.model('User', userSchema);
+const Referral = mongoose.model('Referral', referralSchema);
+const Transaction = mongoose.model('Transaction', transactionSchema);
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
@@ -19,14 +58,6 @@ const razorpay = new Razorpay({
     key_id: RAZORPAY_KEY_ID,
     key_secret: RAZORPAY_KEY_SECRET
 });
-
-// Mock Database
-const db = {
-    users: {},        // userId -> { lang, balance, active, referrer, referralId, withdrawn }
-    referrals: {},    // referredId -> referrerId
-    transactions: {}, // paymentId -> processed (Duplicate Protection)
-    walletLedger: {}  // userId -> [ {type, amount, desc, time} ]
-};
 
 // Translations Dictionary
 const t = {
@@ -71,11 +102,6 @@ const t = {
     }
 };
 
-function getLang(userId) {
-    return db.users[userId]?.lang || 'en';
-}
-
-// Main Menu Keyboard
 function getMainMenu(lang) {
     const dict = t[lang];
     return Markup.keyboard([
@@ -85,58 +111,67 @@ function getMainMenu(lang) {
     ]).resize();
 }
 
-// 1. /start Command & Referral Handling
+// 1. /start Command & Referral Handling (Error Handled)
 bot.start(async (ctx) => {
-    const userId = ctx.from.id.toString();
-    const payload = ctx.startPayload;
+    try {
+        const userId = ctx.from.id.toString();
+        const payload = ctx.startPayload;
 
-    if (!db.users[userId]) {
-        db.users[userId] = {
-            lang: 'en',
-            balance: 0,
-            withdrawn: 0,
-            active: false,
-            referrer: null,
-            referralId: 'REF' + userId
-        };
-        db.walletLedger[userId] = [];
+        let user = await User.findOne({ userId });
 
-        if (payload && payload !== db.users[userId].referralId) {
-            const referrerId = Object.keys(db.users).find(
-                id => db.users[id].referralId === payload
-            );
-            if (referrerId && referrerId !== userId) {
-                db.users[userId].referrer = referrerId;
-                db.referrals[userId] = referrerId;
+        if (!user) {
+            user = new User({
+                userId,
+                lang: 'en',
+                balance: 0,
+                withdrawn: 0,
+                active: false,
+                referrer: null,
+                referralId: 'REF' + userId,
+                walletLedger: []
+            });
+
+            if (payload && payload !== user.referralId) {
+                const referrerUser = await User.findOne({ referralId: payload });
+                if (referrerUser && referrerUser.userId !== userId) {
+                    user.referrer = referrerUser.userId;
+                    await Referral.create({ referredId: userId, referrerId: referrerUser.userId });
+                }
             }
+
+            await user.save();
+
+            return ctx.reply(
+                t.en.welcome,
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('🇬🇺 ગુજરાતી', 'lang_gu')],
+                    [Markup.button.callback('🇮🇳 हिन्दी', 'lang_hi')],
+                    [Markup.button.callback('🇬🇧 English', 'lang_en')]
+                ])
+            );
         }
 
-        return ctx.reply(
-            t.en.welcome,
-            Markup.inlineKeyboard([
-                [Markup.button.callback('🇬🇺 ગુજરાતી', 'lang_gu')],
-                [Markup.button.callback('🇮🇳 हिन्दी', 'lang_hi')],
-                [Markup.button.callback('🇬🇧 English', 'lang_en')]
-            ])
-        );
+        return ctx.reply(t[user.lang].menu, getMainMenu(user.lang));
+    } catch (err) {
+        console.error("Error in /start command:", err);
+        return ctx.reply("An error occurred. Please try again later.");
     }
-
-    const lang = getLang(userId);
-    return ctx.reply(t[lang].menu, getMainMenu(lang));
 });
 
 // 2. Language Selection Callbacks
 bot.action(/lang_(gu|hi|en)/, async (ctx) => {
-    const userId = ctx.from.id.toString();
-    const selectedLang = ctx.match[1];
+    try {
+        const userId = ctx.from.id.toString();
+        const selectedLang = ctx.match[1];
 
-    if (db.users[userId]) {
-        db.users[userId].lang = selectedLang;
+        await User.findOneAndUpdate({ userId }, { lang: selectedLang });
+
+        await ctx.answerCbQuery();
+        await ctx.editMessageText(t[selectedLang].langChanged);
+        return ctx.reply(t[selectedLang].menu, getMainMenu(selectedLang));
+    } catch (err) {
+        console.error("Error in language selection:", err);
     }
-
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(t[selectedLang].langChanged);
-    return ctx.reply(t[selectedLang].menu, getMainMenu(selectedLang));
 });
 
 // 3. Change Language Handler from Menu
@@ -151,17 +186,18 @@ bot.hears(['🌐 Change Language', '🌐 भाषा बदलें', '🌐 �
     );
 });
 
-// 7 & 8. Join & Razorpay Order Creation
+// Join & Razorpay Order Creation
 bot.hears(/Join/i, async (ctx) => {
-    const userId = ctx.from.id.toString();
-    const lang = getLang(userId);
-
-    if (db.users[userId] && db.users[userId].active) {
-        return ctx.reply(lang === 'gu' ? "તમે પહેલેથી જ Active Member છો!" : "You are already an Active Member!");
-    }
-
     try {
-        const order = await razorpay.orders.create({
+        const userId = ctx.from.id.toString();
+        const user = await User.findOne({ userId });
+        const lang = user ? user.lang : 'en';
+
+        if (user && user.active) {
+            return ctx.reply(lang === 'gu' ? "તમે પહેલેથી જ Active Member છો!" : "You are already an Active Member!");
+        }
+
+        await razorpay.orders.create({
             amount: 10000,
             currency: 'INR',
             receipt: 'rcpt_' + userId + '_' + Date.now(),
@@ -175,49 +211,66 @@ bot.hears(/Join/i, async (ctx) => {
             ])
         );
     } catch (err) {
-        console.error(err);
+        console.error("Error in Join command:", err);
         return ctx.reply("Payment initialization failed. Please try again later.");
     }
 });
 
-// 13. My Referrals / Refer Menu
-bot.hears(/Refer/i, (ctx) => {
-    const userId = ctx.from.id.toString();
-    const lang = getLang(userId);
-    const user = db.users[userId];
+// My Referrals / Refer Menu
+bot.hears(/Refer/i, async (ctx) => {
+    try {
+        const userId = ctx.from.id.toString();
+        const user = await User.findOne({ userId });
+        if (!user) return ctx.reply("Please send /start first.");
 
-    const myReferralLink = `https://t.me/${bot.botInfo.username}?start=${user.referralId}`;
-    
-    const totalRef = Object.values(db.referrals).filter(refId => refId === userId).length;
-    const successfulRef = Object.keys(db.referrals).filter(
-        refrId => db.referrals[refrId] === userId && db.users[refrId]?.active
-    ).length;
-    const pendingRef = totalRef - successfulRef;
-    const earnings = successfulRef * 50;
+        const lang = user.lang;
+        const myReferralLink = `https://t.me/${bot.botInfo.username}?start=${user.referralId}`;
+        
+        const totalRef = await Referral.countDocuments({ referrerId: userId });
+        
+        const referralsList = await Referral.find({ referrerId: userId });
+        let successfulRef = 0;
+        for (let ref of referralsList) {
+            const referredUser = await User.findOne({ userId: ref.referredId });
+            if (referredUser && referredUser.active) {
+                successfulRef++;
+            }
+        }
 
-    let text = t[lang].referralInfo
-        .replace('{link}', myReferralLink)
-        .replace('{total}', totalRef)
-        .replace('{success}', successfulRef)
-        .replace('{pending}', pendingRef)
-        .replace('{earnings}', earnings);
+        const pendingRef = totalRef - successfulRef;
+        const earnings = successfulRef * 50;
 
-    return ctx.reply(text);
+        let text = t[lang].referralInfo
+            .replace('{link}', myReferralLink)
+            .replace('{total}', totalRef)
+            .replace('{success}', successfulRef)
+            .replace('{pending}', pendingRef)
+            .replace('{earnings}', earnings);
+
+        return ctx.reply(text);
+    } catch (err) {
+        console.error("Error in Refer menu:", err);
+    }
 });
 
-// 14 & 15. My Wallet & Withdraw
-bot.hears(/Wallet/i, (ctx) => {
-    const userId = ctx.from.id.toString();
-    const lang = getLang(userId);
-    const user = db.users[userId];
+// My Wallet & Withdraw
+bot.hears(/Wallet/i, async (ctx) => {
+    try {
+        const userId = ctx.from.id.toString();
+        const user = await User.findOne({ userId });
+        if (!user) return ctx.reply("Please send /start first.");
 
-    let text = t[lang].walletInfo
-        .replace('{balance}', user.balance)
-        .replace('{withdrawn}', user.withdrawn);
+        const lang = user.lang;
+        let text = t[lang].walletInfo
+            .replace('{balance}', user.balance)
+            .replace('{withdrawn}', user.withdrawn);
 
-    return ctx.reply(text, Markup.inlineKeyboard([
-        [Markup.button.callback('💸 Withdraw Request', 'withdraw_req')]
-    ]));
+        return ctx.reply(text, Markup.inlineKeyboard([
+            [Markup.button.callback('💸 Withdraw Request', 'withdraw_req')]
+        ]));
+    } catch (err) {
+        console.error("Error in Wallet menu:", err);
+    }
 });
 
 bot.action('withdraw_req', async (ctx) => {
@@ -225,113 +278,146 @@ bot.action('withdraw_req', async (ctx) => {
     return ctx.reply("Please send your UPI ID or Bank Details for withdrawal (e.g., /withdraw UPI_ID):");
 });
 
-bot.command('withdraw', (ctx) => {
-    const userId = ctx.from.id.toString();
-    const user = db.users[userId];
-    const details = ctx.message.text.split(' ').slice(1).join(' ');
+bot.command('withdraw', async (ctx) => {
+    try {
+        const userId = ctx.from.id.toString();
+        const user = await User.findOne({ userId });
+        if (!user) return ctx.reply("Please send /start first.");
 
-    if (!details) return ctx.reply("Please provide UPI ID. Format: /withdraw yourname@upi");
-    if (user.balance < 100) return ctx.reply("Minimum withdrawal balance is ₹100.");
+        const details = ctx.message.text.split(' ').slice(1).join(' ');
 
-    const amountToWithdraw = user.balance;
-    user.balance = 0;
-    user.withdrawn += amountToWithdraw;
+        if (!details) return ctx.reply("Please provide UPI ID. Format: /withdraw yourname@upi");
+        if (user.balance < 100) return ctx.reply("Minimum withdrawal balance is ₹100.");
 
-    db.walletLedger[userId].push({
-        type: 'WITHDRAWAL',
-        amount: -amountToWithdraw,
-        desc: `Withdrawal to ${details}`,
-        time: new Date()
-    });
+        const amountToWithdraw = user.balance;
+        user.balance = 0;
+        user.withdrawn += amountToWithdraw;
 
-    return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
+        user.walletLedger.push({
+            type: 'WITHDRAWAL',
+            amount: -amountToWithdraw,
+            desc: `Withdrawal to ${details}`,
+            time: new Date()
+        });
+
+        await user.save();
+
+        return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
+    } catch (err) {
+        console.error("Error in withdraw command:", err);
+        return ctx.reply("An error occurred while processing withdrawal.");
+    }
 });
 
-// SECURE ADMIN PANEL / COMMAND FEATURE (Environment variable આધારિત સિક્યોરિટી)
-bot.command('admin', (ctx) => {
-    const userId = ctx.from.id.toString();
+// SECURE ADMIN PANEL
+bot.command('admin', async (ctx) => {
+    try {
+        const userId = ctx.from.id.toString();
 
-    if (userId !== ADMIN_TELEGRAM_ID) {
-        return ctx.reply("⛔ You are not authorized to use the admin panel.");
+        if (userId !== ADMIN_TELEGRAM_ID) {
+            return ctx.reply("⛔ You are not authorized to use the admin panel.");
+        }
+
+        const totalUsers = await User.countDocuments();
+        const activeMembers = await User.countDocuments({ active: true });
+        const totalPayments = await Transaction.countDocuments();
+        const totalEarningsCollected = totalPayments * 100;
+
+        const users = await User.find();
+        let withdrawalSummary = 0;
+        users.forEach(u => {
+            withdrawalSummary += u.withdrawn;
+        });
+
+        let adminText = `👑 **Admin Dashboard / Statistics**\n\n`;
+        adminText += `👥 Total Users: ${totalUsers}\n`;
+        adminText += `✅ Active Members: ${activeMembers}\n`;
+        adminText += `💳 Total Payments (₹100): ${totalPayments} (₹${totalEarningsCollected})\n`;
+        adminText += `💸 Total Withdrawn Amount: ₹${withdrawalSummary}\n`;
+
+        return ctx.replyWithMarkdown(adminText);
+    } catch (err) {
+        console.error("Error in admin command:", err);
+        return ctx.reply("Error loading admin stats.");
     }
-
-    const totalUsers = Object.keys(db.users).length;
-    const activeMembers = Object.values(db.users).filter(u => u.active).length;
-    const totalPayments = Object.keys(db.transactions).length;
-    const totalEarningsCollected = totalPayments * 100;
-
-    let withdrawalSummary = 0;
-    Object.values(db.users).forEach(u => {
-        withdrawalSummary += u.withdrawn;
-    });
-
-    let adminText = `👑 **Admin Dashboard / Statistics**\n\n`;
-    adminText += `👥 Total Users: ${totalUsers}\n`;
-    adminText += `✅ Active Members: ${activeMembers}\n`;
-    adminText += `💳 Total Payments (₹100): ${totalPayments} (₹${totalEarningsCollected})\n`;
-    adminText += `💸 Total Withdrawn Amount: ₹${withdrawalSummary}\n`;
-
-    return ctx.replyWithMarkdown(adminText);
 });
 
 // Telegram Webhook Setup
 app.use(async (req, res, next) => {
-    if (req.originalUrl === '/telegram-webhook') {
-        return bot.handleUpdate(req.body, res);
+    try {
+        if (req.originalUrl === '/telegram-webhook') {
+            return bot.handleUpdate(req.body, res);
+        }
+        next();
+    } catch (err) {
+        console.error("Error handling telegram update:", err);
+        res.status(500).send('Internal Server Error');
     }
-    next();
 });
 
 // Razorpay Webhook Endpoint
 app.post('/razorpay-webhook', async (req, res) => {
-    const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
-    shasum.update(JSON.stringify(req.body));
-    const digest = shasum.digest('hex');
+    try {
+        const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
+        shasum.update(JSON.stringify(req.body));
+        const digest = shasum.digest('hex');
 
-    if (digest !== req.headers['x-razorpay-signature']) {
-        return res.status(400).json({ status: 'Invalid Signature' });
-    }
-
-    const event = req.body.event;
-
-    if (event === 'payment.captured') {
-        const paymentEntity = req.body.payload.payment.entity;
-        const paymentId = paymentEntity.id;
-        const userId = paymentEntity.notes.userId;
-
-        if (db.transactions[paymentId]) {
-            return res.status(200).json({ status: 'Already Processed' });
+        if (digest !== req.headers['x-razorpay-signature']) {
+            return res.status(400).json({ status: 'Invalid Signature' });
         }
-        db.transactions[paymentId] = true;
 
-        if (userId && db.users[userId]) {
-            db.users[userId].active = true;
+        const event = req.body.event;
 
-            const referrerId = db.users[userId].referrer;
-            if (referrerId && db.users[referrerId]) {
-                db.users[referrerId].balance += 50;
+        if (event === 'payment.captured') {
+            const paymentEntity = req.body.payload.payment.entity;
+            const paymentId = paymentEntity.id;
+            const userId = paymentEntity.notes.userId;
 
-                db.walletLedger[referrerId].push({
-                    type: 'REFERRAL_REWARD',
-                    amount: 50,
-                    desc: `Referral bonus from User ${userId}`,
-                    time: new Date()
-                });
-
-                bot.telegram.sendMessage(
-                    referrerId,
-                    `🎉 Referral Reward! Your referred user made a successful payment. +₹50 added to your wallet!`
-                ).catch(() => {});
+            const existingTx = await Transaction.findOne({ paymentId });
+            if (existingTx) {
+                return res.status(200).json({ status: 'Already Processed' });
             }
+            await Transaction.create({ paymentId });
 
-            bot.telegram.sendMessage(
-                userId,
-                `✅ Payment Successful! Your Membership is now Active.`
-            ).catch(() => {});
+            if (userId) {
+                const user = await User.findOne({ userId });
+                if (user) {
+                    user.active = true;
+
+                    if (user.referrer) {
+                        const referrerUser = await User.findOne({ userId: user.referrer });
+                        if (referrerUser) {
+                            referrerUser.balance += 50;
+                            referrerUser.walletLedger.push({
+                                type: 'REFERRAL_REWARD',
+                                amount: 50,
+                                desc: `Referral bonus from User ${userId}`,
+                                time: new Date()
+                            });
+                            await referrerUser.save();
+
+                            bot.telegram.sendMessage(
+                                user.referrer,
+                                `🎉 Referral Reward! Your referred user made a successful payment. +₹50 added to your wallet!`
+                            ).catch((e) => console.error("Notification error:", e));
+                        }
+                    }
+
+                    await user.save();
+
+                    bot.telegram.sendMessage(
+                        userId,
+                        `✅ Payment Successful! Your Membership is now Active.`
+                    ).catch((e) => console.error("Notification error:", e));
+                }
+            }
         }
-    }
 
-    res.json({ status: 'ok' });
+        res.json({ status: 'ok' });
+    } catch (err) {
+        console.error("Error in razorpay webhook:", err);
+        res.status(500).json({ status: 'error' });
+    }
 });
 
 // Server Start
@@ -345,4 +431,3 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-                                
