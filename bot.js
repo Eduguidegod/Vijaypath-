@@ -26,6 +26,16 @@ const ledgerSchema = new mongoose.Schema({
     time: { type: Date, default: Date.now }
 });
 
+// વિડ્રોઅલ રિક્વેસ્ટ માટેનું અલગ સ્કિમા
+const withdrawalSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    firstName: String,
+    amount: { type: Number, required: true },
+    upiDetails: { type: String, required: true },
+    status: { type: String, default: 'Pending' }, // Pending / Approved
+    time: { type: Date, default: Date.now }
+});
+
 const userSchema = new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     firstName: String,
@@ -50,6 +60,7 @@ const transactionSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 const Referral = mongoose.model('Referral', referralSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
+const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
@@ -155,7 +166,6 @@ bot.start(async (ctx) => {
                 ])
             );
         } else {
-            // જો યુઝર પહેલેથી હોય પણ firstName અપડેટ ન હોય તો અપડેટ કરી દો
             user.firstName = firstName;
             await user.save();
         }
@@ -326,6 +336,15 @@ bot.command('withdraw', async (ctx) => {
 
         await user.save();
 
+        // સેવરે ડેટાબેઝમાં વિડ્રોઅલ રિક્વેસ્ટ સેવ કરો
+        await Withdrawal.create({
+            userId: userId,
+            firstName: user.firstName || ctx.from.first_name || 'User',
+            amount: amountToWithdraw,
+            upiDetails: details,
+            status: 'Pending'
+        });
+
         // યુઝરને સક્સેસ મેસેજ
         await ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
 
@@ -333,7 +352,7 @@ bot.command('withdraw', async (ctx) => {
         if (ADMIN_TELEGRAM_ID) {
             const adminMsg = `💸 *નવી વિડ્રોઅલ રિક્વેસ્ટ આવી છે!*\n\n` +
                              `👤 યુઝર આઈડી: \`${userId}\`\n` +
-                             `👤 યુઝરનું નામ: ${user.firstName || ctx.from.first_name || 'N/A'}\n` +
+                             `👤 યુઝરનું નામ: ${user.firstName || 'N/A'}\n` +
                              `💰 રકમ: ₹${amountToWithdraw}\n` +
                              `📌 UPI/બેંક વિગત: \`${details}\``;
 
@@ -347,7 +366,7 @@ bot.command('withdraw', async (ctx) => {
     }
 });
 
-// SECURE ADMIN PANEL
+// SECURE ADMIN PANEL WITH PENDING WITHDRAWALS LIST
 bot.command('admin', async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -367,11 +386,26 @@ bot.command('admin', async (ctx) => {
             withdrawalSummary += u.withdrawn;
         });
 
-        let adminText = `👑 **Admin Dashboard / Statistics**\n\n`;
+        let adminText = `👑 *Admin Dashboard / Statistics*\n\n`;
         adminText += `👥 Total Users: ${totalUsers}\n`;
         adminText += `✅ Active Members: ${activeMembers}\n`;
         adminText += `💳 Total Payments (₹100): ${totalPayments} (₹${totalEarningsCollected})\n`;
-        adminText += `💸 Total Withdrawn Amount: ₹${withdrawalSummary}\n`;
+        adminText += `💸 Total Withdrawn Amount: ₹${withdrawalSummary}\n\n`;
+
+        // પેન્ડિંગ વિડ્રોઅલ રિક્વેસ્ટનું લિસ્ટ ફેચ કરવું
+        const pendingWithdrawals = await Withdrawal.find({ status: 'Pending' }).sort({ time: -1 }).limit(10);
+        
+        if (pendingWithdrawals.length > 0) {
+            adminText += `📋 *Pending Withdrawal Requests (${pendingWithdrawals.length}):*\n`;
+            pendingWithdrawals.forEach((w, index) => {
+                adminText += `\n${index + 1}. Name: ${w.firstName}\n`;
+                adminText += `   ID: \`${w.userId}\`\n`;
+                adminText += `   Amount: ₹${w.amount}\n`;
+                adminText += `   UPI: \`${w.upiDetails}\`\n`;
+            });
+        } else {
+            adminText += `📋 *No Pending Withdrawal Requests.*`;
+        }
 
         return ctx.replyWithMarkdown(adminText);
     } catch (err) {
@@ -462,4 +496,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-    
+            
