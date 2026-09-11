@@ -28,6 +28,7 @@ const ledgerSchema = new mongoose.Schema({
 
 const userSchema = new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
+    firstName: String,
     lang: { type: String, default: 'en' },
     balance: { type: Number, default: 0 },
     withdrawn: { type: Number, default: 0 },
@@ -117,6 +118,7 @@ function getMainMenu(lang) {
 bot.start(async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
+        const firstName = ctx.from.first_name || 'User';
         const payload = ctx.startPayload;
 
         let user = await User.findOne({ userId });
@@ -124,6 +126,7 @@ bot.start(async (ctx) => {
         if (!user) {
             user = new User({
                 userId,
+                firstName,
                 lang: 'en',
                 balance: 0,
                 withdrawn: 0,
@@ -151,6 +154,10 @@ bot.start(async (ctx) => {
                     [Markup.button.callback('🇬🇧 English', 'lang_en')]
                 ])
             );
+        } else {
+            // જો યુઝર પહેલેથી હોય પણ firstName અપડેટ ન હોય તો અપડેટ કરી દો
+            user.firstName = firstName;
+            await user.save();
         }
 
         return ctx.reply(t[user.lang].menu, getMainMenu(user.lang));
@@ -300,7 +307,8 @@ bot.command('withdraw', async (ctx) => {
         const user = await User.findOne({ userId });
         if (!user) return ctx.reply("Please send /start first.");
 
-        const details = ctx.message.text.split(' ').slice(1).join(' ');
+        const text = ctx.message.text;
+        const details = text.split(' ').slice(1).join(' ');
 
         if (!details) return ctx.reply("Please provide UPI ID. Format: /withdraw yourname@upi");
         if (user.balance < 100) return ctx.reply("Minimum withdrawal balance is ₹100.");
@@ -318,7 +326,21 @@ bot.command('withdraw', async (ctx) => {
 
         await user.save();
 
-        return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
+        // યુઝરને સક્સેસ મેસેજ
+        await ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
+
+        // 🔔 એડમિનને Telegram પર ઇન્સ્ટન્ટ નોટિફિકેશન મોકલવાની સુવિધા
+        if (ADMIN_TELEGRAM_ID) {
+            const adminMsg = `💸 *નવી વિડ્રોઅલ રિક્વેસ્ટ આવી છે!*\n\n` +
+                             `👤 યુઝર આઈડી: \`${userId}\`\n` +
+                             `👤 યુઝરનું નામ: ${user.firstName || ctx.from.first_name || 'N/A'}\n` +
+                             `💰 રકમ: ₹${amountToWithdraw}\n` +
+                             `📌 UPI/બેંક વિગત: \`${details}\``;
+
+            await bot.telegram.sendMessage(ADMIN_TELEGRAM_ID, adminMsg, { parse_mode: 'Markdown' })
+                .catch((e) => console.error("Admin notification error:", e));
+        }
+
     } catch (err) {
         console.error("Error in withdraw command:", err);
         return ctx.reply("An error occurred while processing withdrawal.");
@@ -440,4 +462,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-            
+    
