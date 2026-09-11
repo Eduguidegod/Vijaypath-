@@ -4,12 +4,11 @@ const bodyParser = require('body-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-// Configuration (તમારી API Keys અહીં ઉમેરો)
-const BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
-const RAZORPAY_KEY_ID = 'YOUR_RAZORPAY_KEY_ID';
-const RAZORPAY_KEY_SECRET = 'YOUR_RAZORPAY_KEY_SECRET';
-const WEBHOOK_SECRET = 'YOUR_RAZORPAY_WEBHOOK_SECRET';
-const DOMAIN = 'https://yourdomain.com'; // Webhook URL માટે
+// Environment Variables માંથી વિગતો મેળવવી (Render Environment માં સેટ કરેલ હોવી જોઈએ)
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
@@ -22,8 +21,8 @@ const razorpay = new Razorpay({
 
 // Mock Database (પ્રોડક્શનમાં MongoDB કે PostgreSQL વાપરવું)
 const db = {
-    users: {},     // userId -> { lang, balance, active, referrer, referralId, withdrawn }
-    referrals: {}, // referredId -> referrerId
+    users: {},        // userId -> { lang, balance, active, referrer, referralId, withdrawn }
+    referrals: {},    // referredId -> referrerId
     transactions: {}, // paymentId -> processed (Duplicate Protection)
     walletLedger: {}  // userId -> [ {type, amount, desc, time} ]
 };
@@ -103,7 +102,6 @@ bot.start(async (ctx) => {
 
         // Handle Referral Link Tracking (Duplicate Referral Protection)
         if (payload && payload !== db.users[userId].referralId) {
-            // Find referrer by referralId
             const referrerId = Object.keys(db.users).find(
                 id => db.users[id].referralId === payload
             );
@@ -165,20 +163,16 @@ bot.hears(/Join/i, async (ctx) => {
 
     try {
         const order = await razorpay.orders.create({
-            amount: 10000, // ₹100 inpaise
+            amount: 10000, // ₹100 in paise
             currency: 'INR',
             receipt: 'rcpt_' + userId + '_' + Date.now(),
             notes: { userId: userId }
         });
-
-        // Payment Link / Checkout URL (Using Razorpay standard link or Web App)
-        const paymentUrl = `https://api.razorpay.com/v1/checkout/embedded?key_id=${RAZORPAY_KEY_ID}&order_id=${order.id}`; 
-        // Note: For Telegram bots, you can use Telegram Payments API or send an Invoice / Payment URL.
         
         return ctx.reply(
             t[lang].joinPrompt,
             Markup.inlineKeyboard([
-                [Markup.button.url(t[lang].payBtn, `https://rzp.io/i/YOUR_PAYMENT_PAGE_LINK`)] // અથવા તમારું Web App / Gateway URL
+                [Markup.button.url(t[lang].payBtn, `https://rzp.io/i/YOUR_PAYMENT_PAGE_LINK`)]
             ])
         );
     } catch (err) {
@@ -195,7 +189,6 @@ bot.hears(/Refer/i, (ctx) => {
 
     const myReferralLink = `https://t.me/${bot.botInfo.username}?start=${user.referralId}`;
     
-    // Calculate stats
     const totalRef = Object.values(db.referrals).filter(refId => refId === userId).length;
     const successfulRef = Object.keys(db.referrals).filter(
         refrId => db.referrals[refrId] === userId && db.users[refrId]?.active
@@ -255,7 +248,6 @@ bot.command('withdraw', (ctx) => {
     return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
 });
 
-
 // 8, 9, 10, 12, 16. Razorpay Webhook for Payment Verification & Duplicate Protection
 app.post('/razorpay-webhook', async (req, res) => {
     const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
@@ -313,7 +305,7 @@ app.post('/razorpay-webhook', async (req, res) => {
     res.json({ status: 'ok' });
 });
 
-// Server Start
+// Server Start (Render port support)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
@@ -323,4 +315,4 @@ app.listen(PORT, () => {
 // Enable graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-  
+            
