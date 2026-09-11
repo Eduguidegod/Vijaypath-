@@ -18,7 +18,7 @@ mongoose.connect(MONGODB_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas successfully!'))
     .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Mongoose Schemas & Models (ડેટા કાયમ માટે સેવ કરવા માટે)
+// Mongoose Schemas & Models
 const ledgerSchema = new mongoose.Schema({
     type: String,
     amount: Number,
@@ -52,7 +52,9 @@ const Transaction = mongoose.model('Transaction', transactionSchema);
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
-app.use(bodyParser.json());
+
+// સામાન્ય રાઉટ્સ માટે JSON બોડી પાર્સર
+app.use(express.json());
 
 const razorpay = new Razorpay({
     key_id: RAZORPAY_KEY_ID,
@@ -171,6 +173,7 @@ bot.action(/lang_(gu|hi|en)/, async (ctx) => {
         return ctx.reply(t[selectedLang].menu, getMainMenu(selectedLang));
     } catch (err) {
         console.error("Error in language selection:", err);
+        return ctx.reply("An error occurred.");
     }
 });
 
@@ -186,7 +189,7 @@ bot.hears(['🌐 Change Language', '🌐 भाषा बदलें', '🌐 �
     );
 });
 
-// Join & Razorpay Dynamic Payment Link Generation via API (Fixed Contact Issue)
+// Join & Razorpay Dynamic Payment Link Generation via API
 bot.hears(/Join/i, async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -197,8 +200,7 @@ bot.hears(/Join/i, async (ctx) => {
             return ctx.reply(lang === 'gu' ? "તમે પહેલેથી જ Active Member છો!" : "You are already an Active Member!");
         }
 
-        // Razorpay Payment Link API (Without restricted contact numbers)
-        const paymentLinkResponse = await razorpay.paymentLink.create({
+        const paymentLinkResponse = await razorpay.paymentLinks.create({
             amount: 10000, // ₹100 in paisa
             currency: 'INR',
             accept_partial: false,
@@ -262,6 +264,7 @@ bot.hears(/Refer/i, async (ctx) => {
         return ctx.reply(text);
     } catch (err) {
         console.error("Error in Refer menu:", err);
+        return ctx.reply("An error occurred.");
     }
 });
 
@@ -282,6 +285,7 @@ bot.hears(/Wallet/i, async (ctx) => {
         ]));
     } catch (err) {
         console.error("Error in Wallet menu:", err);
+        return ctx.reply("An error occurred.");
     }
 });
 
@@ -354,34 +358,25 @@ bot.command('admin', async (ctx) => {
     }
 });
 
-// Telegram Webhook Setup
-app.use(async (req, res, next) => {
-    try {
-        if (req.originalUrl === '/telegram-webhook') {
-            return bot.handleUpdate(req.body, res);
-        }
-        next();
-    } catch (err) {
-        console.error("Error handling telegram update:", err);
-        res.status(500).send('Internal Server Error');
-    }
-});
+// Telegram Webhook Middleware
+app.use(bot.webhookCallback('/telegram-webhook'));
 
-// Razorpay Webhook Endpoint
-app.post('/razorpay-webhook', async (req, res) => {
+// Razorpay Webhook Endpoint (Using express.raw to prevent signature verification failure)
+app.post('/razorpay-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
         const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
-        shasum.update(JSON.stringify(req.body));
+        shasum.update(req.body); // req.body is Buffer here
         const digest = shasum.digest('hex');
 
         if (digest !== req.headers['x-razorpay-signature']) {
             return res.status(400).json({ status: 'Invalid Signature' });
         }
 
-        const event = req.body.event;
+        const reqBody = JSON.parse(req.body.toString());
+        const event = reqBody.event;
 
         if (event === 'payment_link.paid' || event === 'payment.captured') {
-            const entity = req.body.payload.payment_link ? req.body.payload.payment_link.entity : req.body.payload.payment.entity;
+            const entity = reqBody.payload.payment_link ? reqBody.payload.payment_link.entity : reqBody.payload.payment.entity;
             const paymentId = entity.id;
             const userId = entity.notes ? entity.notes.userId : null;
 
@@ -445,4 +440,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-    
+            
