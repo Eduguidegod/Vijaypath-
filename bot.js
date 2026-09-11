@@ -186,7 +186,7 @@ bot.hears(['🌐 Change Language', '🌐 भाषा बदलें', '🌐 �
     );
 });
 
-// Join & Razorpay Dynamic Payment Link Generation via API
+// Join & Razorpay Dynamic Payment Link Generation via API (Fixed Contact Issue)
 bot.hears(/Join/i, async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -197,7 +197,7 @@ bot.hears(/Join/i, async (ctx) => {
             return ctx.reply(lang === 'gu' ? "તમે પહેલેથી જ Active Member છો!" : "You are already an Active Member!");
         }
 
-        // Razorpay Payment Link API દ્વારા ડાયનેમિક લિંક જનરેટ કરવી
+        // Razorpay Payment Link API (Without restricted contact numbers)
         const paymentLinkResponse = await razorpay.paymentLink.create({
             amount: 10000, // ₹100 in paisa
             currency: 'INR',
@@ -205,8 +205,7 @@ bot.hears(/Join/i, async (ctx) => {
             description: 'Telegram Bot Membership Fee',
             customer: {
                 name: ctx.from.first_name || 'User',
-                email: 'support@vijaypath.com',
-                contact: '9999999999'
+                email: 'support@vijaypath.com'
             },
             notify: { sms: false, email: false },
             reminder_enable: false,
@@ -229,7 +228,7 @@ bot.hears(/Join/i, async (ctx) => {
     }
 });
 
-// My Referrals / Refer Menu (Using fixed bot username @Vijaypathj_bot)
+// My Referrals / Refer Menu
 bot.hears(/Refer/i, async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -368,7 +367,7 @@ app.use(async (req, res, next) => {
     }
 });
 
-// Razorpay Webhook Endpoint (Supports Payment Link Events)
+// Razorpay Webhook Endpoint
 app.post('/razorpay-webhook', async (req, res) => {
     try {
         const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
@@ -381,7 +380,6 @@ app.post('/razorpay-webhook', async (req, res) => {
 
         const event = req.body.event;
 
-        // Payment Link Paid event અથવા Payment Captured event બંનેને સપોર્ટ કરવા માટે
         if (event === 'payment_link.paid' || event === 'payment.captured') {
             const entity = req.body.payload.payment_link ? req.body.payload.payment_link.entity : req.body.payload.payment.entity;
             const paymentId = entity.id;
