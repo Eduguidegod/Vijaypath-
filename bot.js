@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
+// Environment Variables માંથી વિગતો મેળવવી
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
@@ -18,13 +19,15 @@ const razorpay = new Razorpay({
     key_secret: RAZORPAY_KEY_SECRET
 });
 
+// Mock Database
 const db = {
-    users: {},
-    referrals: {},
-    transactions: {},
-    walletLedger: {}
+    users: {},        // userId -> { lang, balance, active, referrer, referralId, withdrawn }
+    referrals: {},    // referredId -> referrerId
+    transactions: {}, // paymentId -> processed (Duplicate Protection)
+    walletLedger: {}  // userId -> [ {type, amount, desc, time} ]
 };
 
+// Translations Dictionary
 const t = {
     gu: {
         welcome: "નમસ્તે! Telegram Referral Bot માં આપનું સ્વાગત છે. કૃપા કરીને તમારી ભાષા પસંદ કરો:",
@@ -71,6 +74,7 @@ function getLang(userId) {
     return db.users[userId]?.lang || 'en';
 }
 
+// Main Menu Keyboard
 function getMainMenu(lang) {
     const dict = t[lang];
     return Markup.keyboard([
@@ -80,6 +84,7 @@ function getMainMenu(lang) {
     ]).resize();
 }
 
+// 1. /start Command & Referral Handling
 bot.start(async (ctx) => {
     const userId = ctx.from.id.toString();
     const payload = ctx.startPayload;
@@ -119,6 +124,7 @@ bot.start(async (ctx) => {
     return ctx.reply(t[lang].menu, getMainMenu(lang));
 });
 
+// 2. Language Selection Callbacks
 bot.action(/lang_(gu|hi|en)/, async (ctx) => {
     const userId = ctx.from.id.toString();
     const selectedLang = ctx.match[1];
@@ -132,6 +138,7 @@ bot.action(/lang_(gu|hi|en)/, async (ctx) => {
     return ctx.reply(t[selectedLang].menu, getMainMenu(selectedLang));
 });
 
+// 3. Change Language Handler from Menu
 bot.hears(['🌐 Change Language', '🌐 भाषा बदलें', '🌐 ભાષા બદલો'], (ctx) => {
     return ctx.reply(
         "Select Language / ભાષા પસંદ કરો / भाषा चुनें:",
@@ -143,6 +150,7 @@ bot.hears(['🌐 Change Language', '🌐 भाषा बदलें', '🌐 �
     );
 });
 
+// 7 & 8. Join & Razorpay Order Creation (અહીં તમારી નવી પેમેન્ટ લિંક ઉમેરેલી છે)
 bot.hears(/Join/i, async (ctx) => {
     const userId = ctx.from.id.toString();
     const lang = getLang(userId);
@@ -162,7 +170,7 @@ bot.hears(/Join/i, async (ctx) => {
         return ctx.reply(
             t[lang].joinPrompt,
             Markup.inlineKeyboard([
-                [Markup.button.url(t[lang].payBtn, `https://rzp.io/i/YOUR_PAYMENT_PAGE_LINK`)]
+                [Markup.button.url(t[lang].payBtn, 'https://rzp.io/rzp/Dj8c5zXx')]
             ])
         );
     } catch (err) {
@@ -171,6 +179,7 @@ bot.hears(/Join/i, async (ctx) => {
     }
 });
 
+// 13. My Referrals / Refer Menu
 bot.hears(/Refer/i, (ctx) => {
     const userId = ctx.from.id.toString();
     const lang = getLang(userId);
@@ -195,6 +204,7 @@ bot.hears(/Refer/i, (ctx) => {
     return ctx.reply(text);
 });
 
+// 14 & 15. My Wallet & Withdraw
 bot.hears(/Wallet/i, (ctx) => {
     const userId = ctx.from.id.toString();
     const lang = getLang(userId);
@@ -236,7 +246,7 @@ bot.command('withdraw', (ctx) => {
     return ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
 });
 
-// Telegram Webhook Endpoint (ટેલિગ્રામ મેસેજ મેળવવા માટે)
+// Telegram Webhook Endpoint
 app.use(bot.webhookCallback('/telegram-webhook'));
 bot.telegram.setWebhook(`https://vijaypath.onrender.com/telegram-webhook`);
 
@@ -292,8 +302,9 @@ app.post('/razorpay-webhook', async (req, res) => {
     res.json({ status: 'ok' });
 });
 
+// Server Start
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
-          
+             
