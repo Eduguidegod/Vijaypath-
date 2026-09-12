@@ -217,7 +217,7 @@ bot.hears(/Join/i, async (ctx) => {
             return ctx.reply(lang === 'gu' ? "તમે પહેલેથી જ Active Member છો!" : "You are already an Active Member!");
         }
 
-        const paymentLinkResponse = await razorpay.paymentLinks.create({
+        const paymentLinkResponse = await razorpay.paymentLink.create({
             amount: 10000, // ₹100 in paisa
             currency: 'INR',
             accept_partial: false,
