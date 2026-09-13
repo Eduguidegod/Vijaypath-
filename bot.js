@@ -336,7 +336,6 @@ bot.command('withdraw', async (ctx) => {
 
         await user.save();
 
-        // સેવરે ડેટાબેઝમાં વિડ્રોઅલ રિક્વેસ્ટ સેવ કરો
         await Withdrawal.create({
             userId: userId,
             firstName: user.firstName || ctx.from.first_name || 'User',
@@ -345,10 +344,8 @@ bot.command('withdraw', async (ctx) => {
             status: 'Pending'
         });
 
-        // યુઝરને સક્સેસ મેસેજ
         await ctx.reply(`✅ Withdrawal request of ₹${amountToWithdraw} submitted successfully! Status: Pending Approval.`);
 
-        // 🔔 એડમિનને Telegram પર ઇન્સ્ટન્ટ નોટિફિકેશન મોકલવાની સુવિધા
         if (ADMIN_TELEGRAM_ID) {
             const adminMsg = `💸 *નવી વિડ્રોઅલ રિક્વેસ્ટ આવી છે!*\n\n` +
                              `👤 યુઝર આઈડી: \`${userId}\`\n` +
@@ -391,8 +388,8 @@ bot.command('admin', async (ctx) => {
         adminText += `✅ Active Members: ${activeMembers}\n`;
         adminText += `💳 Total Payments (₹100): ${totalPayments} (₹${totalEarningsCollected})\n`;
         adminText += `💸 Total Withdrawn Amount: ₹${withdrawalSummary}\n\n`;
+        adminText += `💡 *બધા યુઝર્સનું લિસ્ટ જોવા માટે `/allusers` કમાન્ડ મોકલો.*\n\n`;
 
-        // પેન્ડિંગ વિડ્રોઅલ રિક્વેસ્ટનું લિસ્ટ ફેચ કરવું
         const pendingWithdrawals = await Withdrawal.find({ status: 'Pending' }).sort({ time: -1 }).limit(10);
         
         if (pendingWithdrawals.length > 0) {
@@ -414,14 +411,48 @@ bot.command('admin', async (ctx) => {
     }
 });
 
+// 🆕 NEW ADMIN COMMAND: /allusers (બધા યુઝર્સનું પેમેન્ટ અને બેલેન્સ ચેક કરવા માટે)
+bot.command('allusers', async (ctx) => {
+    try {
+        const userId = ctx.from.id.toString();
+
+        if (userId !== ADMIN_TELEGRAM_ID) {
+            return ctx.reply("⛔ You are not authorized.");
+        }
+
+        const allUsers = await User.find().sort({ _id: -1 }).limit(30); // તાજેતરના 30 યુઝર્સ
+        if (allUsers.length === 0) {
+            return ctx.reply("કોઈ યુઝર ડેટાબેઝમાં મળ્યો નથી.");
+        }
+
+        let msg = `👥 *Registered Users List (Recent 30):*\n\n`;
+        allUsers.forEach((u, i) => {
+            const statusIcon = u.active ? "✅ Paid" : "❌ Unpaid";
+            msg += `${i + 1}. *${u.firstName || 'User'}* (${statusIcon})\n`;
+            msg += `   🆔 ID: \`${u.userId}\`\n`;
+            msg += `   💰 Balance: ₹${u.balance} | Withdrawn: ₹${u.withdrawn}\n\n`;
+        });
+
+        // જો મેસેજ લાંબો થઈ જાય તો ટેલિગ્રામની લિમિટ સાચવવા ટુકડામાં મોકલી શકાય અથવા સીધો રિપ્લાય
+        if (msg.length > 4000) {
+            msg = msg.substring(0, 4000) + "\n...(લિમીટના કારણે બાકીનો ડેટા છુપાવેલ છે)";
+        }
+
+        return ctx.replyWithMarkdown(msg);
+    } catch (err) {
+        console.error("Error in allusers command:", err);
+        return ctx.reply("Error fetching users list.");
+    }
+});
+
 // Telegram Webhook Middleware
 app.use(bot.webhookCallback('/telegram-webhook'));
 
-// Razorpay Webhook Endpoint (Using express.raw to prevent signature verification failure)
+// Razorpay Webhook Endpoint
 app.post('/razorpay-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
         const shasum = crypto.createHmac('sha256', WEBHOOK_SECRET);
-        shasum.update(req.body); // req.body is Buffer here
+        shasum.update(req.body);
         const digest = shasum.digest('hex');
 
         if (digest !== req.headers['x-razorpay-signature']) {
@@ -496,4 +527,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-            
+                
