@@ -388,7 +388,7 @@ bot.command('admin', async (ctx) => {
         adminText += `✅ Active Members: ${activeMembers}\n`;
         adminText += `💳 Total Payments (₹100): ${totalPayments} (₹${totalEarningsCollected})\n`;
         adminText += `💸 Total Withdrawn Amount: ₹${withdrawalSummary}\n\n`;
-        adminText += `💡 *બધા યુઝર્સનું લિસ્ટ જોવા માટે `/allusers` કમાન્ડ મોકલો.*\n\n`;
+        adminText += `💡 યુઝર્સનું લિસ્ટ જોવા માટે /allusers કમાન્ડ વાપરો.\n\n`;
 
         const pendingWithdrawals = await Withdrawal.find({ status: 'Pending' }).sort({ time: -1 }).limit(10);
         
@@ -420,7 +420,7 @@ bot.command('allusers', async (ctx) => {
             return ctx.reply("⛔ You are not authorized.");
         }
 
-        const allUsers = await User.find().sort({ _id: -1 }).limit(30); // તાજેતરના 30 યુઝર્સ
+        const allUsers = await User.find().sort({ _id: -1 }).limit(30);
         if (allUsers.length === 0) {
             return ctx.reply("કોઈ યુઝર ડેટાબેઝમાં મળ્યો નથી.");
         }
@@ -433,7 +433,6 @@ bot.command('allusers', async (ctx) => {
             msg += `   💰 Balance: ₹${u.balance} | Withdrawn: ₹${u.withdrawn}\n\n`;
         });
 
-        // જો મેસેજ લાંબો થઈ જાય તો ટેલિગ્રામની લિમિટ સાચવવા ટુકડામાં મોકલી શકાય અથવા સીધો રિપ્લાય
         if (msg.length > 4000) {
             msg = msg.substring(0, 4000) + "\n...(લિમીટના કારણે બાકીનો ડેટા છુપાવેલ છે)";
         }
@@ -527,4 +526,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-                
+            
