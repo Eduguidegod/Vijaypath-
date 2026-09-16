@@ -65,6 +65,11 @@ const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 
+// Cron-job અને હેલ્થ ચેક માટે હોમપેજ રૂટ (200 OK રિટર્ન કરશે)
+app.get('/', (req, res) => {
+    res.status(200).send('Vijaypath Bot is Active and Running! 🚀');
+});
+
 // સામાન્ય રાઉટ્સ માટે JSON બોડી પાર્સર
 app.use(express.json());
 
@@ -526,4 +531,4 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-            
+        
