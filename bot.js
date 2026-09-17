@@ -78,7 +78,7 @@ const razorpay = new Razorpay({
     key_secret: RAZORPAY_KEY_SECRET
 });
 
-// Translations Dictionary
+// Translations Dictionary (ત્રણેય ભાષામાં ₹50 રેફરલ ઇન્કમ ઉમેરેલ છે)
 const t = {
     gu: {
         welcome: "નમસ્તે! Telegram Referral Bot માં આપનું સ્વાગત છે. કૃપા કરીને તમારી ભાષા પસંદ કરો:",
@@ -91,7 +91,7 @@ const t = {
         joinPrompt: "સભ્યપદ મેળવવા માટે નીચેના બટન પર ક્લિક કરીને ₹100 ચૂકવો:",
         payBtn: "💳 Pay ₹100 Now",
         walletInfo: "💰 તમારું વૉલેટ:\n\nકુલ બેલેન્સ: ₹{balance}\nઉપાડેલી રકમ: ₹{withdrawn}",
-        referralInfo: "🔗 તમારી રેફરલ માહિતી:\n\nતમારી લિંક: {link}\nકુલ રેફરલ્સ: {total}\nસફળ (Successful): {success}\nપેન્ડિંગ: {pending}\nકમાણી: ₹{earnings}"
+        referralInfo: "🔗 તમારી રેફરલ માહિતી:\n\n🎁 દર સફળ રેફરલ પર મેળવો: ₹50\nતમારી લિંક: {link}\n\nકુલ રેફરલ્સ: {total}\nસફળ (Successful): {success}\nપેન્ડિંગ: {pending}\nકુલ કમાણી: ₹{earnings}"
     },
     hi: {
         welcome: "नमस्ते! Telegram Referral Bot में आपका स्वागत है। कृपया अपनी भाषा चुनें:",
@@ -104,7 +104,7 @@ const t = {
         joinPrompt: "सदस्यता प्राप्त करने के लिए नीचे दिए गए बटन पर क्लिक करके ₹100 का भुगतान करें:",
         payBtn: "💳 Pay ₹100 Now",
         walletInfo: "💰 आपका वॉलेट:\n\nकुल बैलेंस: ₹{balance}\nनिकासी राशि: ₹{withdrawn}",
-        referralInfo: "🔗 आपकी रेफरल जानकारी:\n\nआपकी लिंक: {link}\nकुल रेफरल्स: {total}\nसफल: {success}\nलंबित (Pending): {pending}\nकमाई: ₹{earnings}"
+        referralInfo: "🔗 आपकी रेफरल जानकारी:\n\n🎁 प्रति सफल रेफरल पाएं: ₹50\nआपकी लिंक: {link}\n\nकुल रेफरल्स: {total}\nसफल: {success}\nलंबित (Pending): {pending}\nकुल कमाई: ₹{earnings}"
     },
     en: {
         welcome: "Hello! Welcome to Telegram Referral Bot. Please select your language:",
@@ -117,7 +117,7 @@ const t = {
         joinPrompt: "Click the button below to pay ₹100 for membership:",
         payBtn: "💳 Pay ₹100 Now",
         walletInfo: "💰 Your Wallet:\n\nCurrent Balance: ₹{balance}\nWithdrawn Amount: ₹{withdrawn}",
-        referralInfo: "🔗 Your Referral Info:\n\nYour Link: {link}\nTotal Referrals: {total}\nSuccessful: {success}\nPending: {pending}\nEarnings: ₹{earnings}"
+        referralInfo: "🔗 Your Referral Info:\n\n🎁 Earn per successful referral: ₹50\nYour Link: {link}\n\nTotal Referrals: {total}\nSuccessful: {success}\nPending: {pending}\nTotal Earnings: ₹{earnings}"
     }
 };
 
@@ -531,4 +531,3 @@ app.listen(PORT, async () => {
         console.error("Failed to set webhook:", err);
     }
 });
-        
