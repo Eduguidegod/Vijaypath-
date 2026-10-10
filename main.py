@@ -23,7 +23,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "")
 
-# MONGODB_URI અથવા MONGO_URI બંનેમાંથી જે મળે તે આપોઆપ લઈ લેશે
+# MONGODB_URI અથવા MONGO_URI બંનેમાંથી જે મળે તે આપોઆપ લેશે
 MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI", "")
 DB_NAME = os.getenv("DB_NAME", "lottery_db")
 
@@ -100,7 +100,7 @@ MESSAGES = {
         ),
         "btn_withdraw": "💸 પૈસા ઉપાડો (Withdraw)",
         "withdraw_min_err": "⚠️ ન્યૂનતમ વિથડ્રોઅલ ₹100 છે. હાલ તમારું બેલેન્સ ₹{bal} છે.",
-        "ask_upi": "કૃપા કરીને તમારો ૧૨ આંકડાનો સાચો UPI ID મોકલો (દા.ત. `mobile@upi` અથવા `name@okhdfcbank`):",
+        "ask_upi": "કૃપા કરીને તમારો સાચો UPI ID મોકલો (દા.ત. `mobile@upi` અથવા `name@okhdfcbank`):",
         "withdraw_submitted": "✅ વિથડ્રોઅલ રિક્વેસ્ટ સફળતાપૂર્વક મોકલાઈ ગઈ છે! એડમિન વેરિફાય કરીને રકમ ટ્રાન્સફર કરશે.",
         "invalid_upi": "❌ અમાન્ય UPI ID! કૃપા કરીને સાચો UPI આઈડી ફરી લખીને મોકલો.",
         "prize_list": (
@@ -437,6 +437,17 @@ def verify_webhook_signature(body_bytes, signature_header):
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 user_states = {}
 
+# ઓટો-ડિટેક્ટ યુઝરનેમ (જો Environment માં સેટ ન હોય તો જાતે મેળવી લેશે)
+def get_bot_username():
+    global BOT_USERNAME
+    if not BOT_USERNAME:
+        try:
+            me = bot.get_me()
+            BOT_USERNAME = me.username
+        except Exception:
+            BOT_USERNAME = "bot"
+    return BOT_USERNAME
+
 def notify_referrer_if_any(ref_reward):
     if not ref_reward:
         return
@@ -506,6 +517,134 @@ def handle_lang_cmd(message):
     )
     bot.send_message(message.chat.id, "Select your language / ભાષા પસંદ કરો:", reply_markup=markup)
 
+# ==========================================
+# ૬. એડમિન સ્પેશિયલ કમાન્ડ્સ (ADMIN COMMANDS)
+# ==========================================
+@bot.message_handler(commands=['admin'])
+def admin_help(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    help_text = (
+        "👑 **એડમિન કંટ્રોલ પેનલ**\n\n"
+        "📊 `/stats` - સિસ્ટમ રિપોર્ટ અને આંકડા\n"
+        "⏳ `/pending_withdrawals` - પેન્ડિંગ UPI વિથડ્રોઅલ્સ\n"
+        "✅ `/approve_wd WD-XXXXX` - વિથડ્રોઅલ મંજૂર કરવા\n"
+        "📢 `/broadcast <મેસેજ>` - બધા યુઝર્સને મેસેજ મોકલવા\n"
+        "🎲 `/draw` - લકી ડ્રો પરિણામ જાહેર કરવા"
+    )
+    bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['stats'])
+def admin_stats(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    total_users = users_col.count_documents({})
+    total_tickets = tickets_col.count_documents({})
+    total_rev = sum([t.get("amount", 0) for t in tickets_col.find()])
+    pending_wd = withdrawals_col.count_documents({"status": "pending"})
+
+    msg = (
+        f"📊 **લાઇવ સિસ્ટમ રિપોર્ટ:**\n\n"
+        f"👥 કુલ રજિસ્ટર્ડ યુઝર્સ: `{total_users}`\n"
+        f"🎟️ કુલ વેચાયેલી ટિકિટો: `{total_tickets} / 80000`\n"
+        f"💰 કુલ ટિકિટ કલેક્શન: `₹{total_rev}`\n"
+        f"⏳ પેન્ડિંગ વિથડ્રોઅલ્સ: `{pending_wd}`"
+    )
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+@bot.message_handler(commands=['pending_withdrawals'])
+def list_pending_withdrawals(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    pending = list(withdrawals_col.find({"status": "pending"}).limit(10))
+    if not pending:
+        bot.send_message(message.chat.id, "✅ કોઈ પેન્ડિંગ વિથડ્રોઅલ નથી.")
+        return
+
+    text = "⏳ **પેન્ડિંગ વિથડ્રોઅલ લિસ્ટ:**\n\n"
+    for w in pending:
+        text += (
+            f"🆔 ID: `{w['request_id']}`\n"
+            f"👤 User: `{w['telegram_id']}`\n"
+            f"💵 Amount: ₹{w['amount']}\n"
+            f"💳 UPI: `{w['upi_id']}`\n"
+            f"મંજૂર કરવા: `/approve_wd {w['request_id']}`\n"
+            "--------------------------\n"
+        )
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['approve_wd'])
+def approve_withdrawal(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        bot.send_message(message.chat.id, "❌ ફોર્મેટ: `/approve_wd WD-XXXXX`", parse_mode="Markdown")
+        return
+
+    req_id = args[1].strip()
+    wd = withdrawals_col.find_one({"request_id": req_id, "status": "pending"})
+    if not wd:
+        bot.send_message(message.chat.id, "❌ આ રિક્વેસ્ટ મળી નથી અથવા પહેલેથી પ્રોસેસ થઈ ગઈ છે.")
+        return
+
+    withdrawals_col.update_one({"request_id": req_id}, {"$set": {"status": "completed"}})
+    bot.send_message(message.chat.id, f"✅ રિક્વેસ્ટ `{req_id}` સફળતાપૂર્વક કમ્પ્લીટ થઈ ગઈ છે.", parse_mode="Markdown")
+
+    try:
+        user_msg = f"✅ તમારી વિથડ્રોઅલ રિક્વેસ્ટ (`{req_id}`) મંજૂર થઈ ગઈ છે. રકમ તમારા UPI (`{wd['upi_id']}`) પર ટ્રાન્સફર થઈ ગઈ છે."
+        bot.send_message(wd['telegram_id'], user_msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast_message(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.send_message(message.chat.id, "❌ ફોર્મેટ: `/broadcast તમારો મેસેજ`")
+        return
+
+    broadcast_text = parts[1]
+    all_users = users_col.find({}, {"telegram_id": 1})
+    count = 0
+
+    for u in all_users:
+        try:
+            bot.send_message(u["telegram_id"], broadcast_text)
+            count += 1
+        except Exception:
+            continue
+
+    bot.send_message(message.chat.id, f"📢 મેસેજ સફળતાપૂર્વક {count} યુઝર્સને મોકલાઈ ગયો છે.")
+
+@bot.message_handler(commands=['draw'])
+def perform_draw(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    total_tickets = tickets_col.count_documents({})
+    if total_tickets < 1:
+        bot.send_message(message.chat.id, "❌ સિસ્ટમમાં હજુ કોઈ ટિકિટ વેચાઈ નથી.")
+        return
+
+    all_tickets = list(tickets_col.find({}, {"ticket_no": 1, "telegram_id": 1}))
+    winner_count = min(len(all_tickets), 2500)
+    winners = random.sample(all_tickets, winner_count)
+
+    first_winner = winners[0]
+    draw_summary = (
+        f"🎉 **લકી ડ્રો પરિણામ જાહેર!** 🎉\n\n"
+        f"🥇 **પ્રથમ ઇનામ (₹1,00,000):**\n"
+        f"🎟️ ટિકિટ નંબર: `{first_winner['ticket_no']}` (User ID: `{first_winner['telegram_id']}`)\n\n"
+        f"👥 કુલ પસંદ થયેલા વિજેતાઓ: {winner_count}\n"
+        f"બાકીના વિજેતાઓની સંપૂર્ણ યાદી ડેટાબેઝમાં સાચવી લેવામાં આવી છે."
+    )
+    bot.send_message(message.chat.id, draw_summary, parse_mode="Markdown")
+
+# ==========================================
+# ૭. સામાન્ય યુઝર હેન્ડલર (MAIN MENU)
+# ==========================================
 @bot.message_handler(func=lambda msg: True)
 def handle_all_messages(message):
     t_id = message.from_user.id
@@ -555,9 +694,10 @@ def handle_all_messages(message):
             parse_mode="Markdown"
         )
 
-    # ૩. રેફરલ લિંક & ૧-ક્લિક સોશિયલ શેરિંગ
+    # ૩. રેફરલ લિંક & સોશિયલ શેરિંગ (સાચા યુઝરનેમ સાથે)
     elif text in [m["menu_refer"], "🤝 રેફરલ લિંક", "🤝 रेफरल लिंक", "🤝 Referral Link"]:
-        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{t_id}"
+        b_name = get_bot_username()
+        ref_link = f"https://t.me/{b_name}?start=ref_{t_id}"
         caption = m["share_caption"].format(link=ref_link)
         encoded_caption = urllib.parse.quote(caption)
         encoded_link = urllib.parse.quote(ref_link)
@@ -591,7 +731,7 @@ def handle_all_messages(message):
     elif text in [m["menu_lang"], "🌐 ભાષા બદલો", "🌐 भाषा बदलें", "🌐 Change Language"]:
         handle_lang_cmd(message)
 
-    # ૭. વિથડ્રોઅલ UPI ઇનપુટ
+    # ૭. વિથડ્રોઅલ UPI ઇનપુટ હેન્ડલર
     elif user_states.get(t_id) == "waiting_upi":
         upi = text.strip()
         if "@" not in upi or len(upi) < 5:
@@ -613,7 +753,8 @@ def handle_all_messages(message):
                 f"Request ID: `{req_id}`\n"
                 f"User ID: `{t_id}` (@{user.get('username', 'N/A')})\n"
                 f"Amount: ₹{bal}\n"
-                f"UPI ID: `{upi}`"
+                f"UPI ID: `{upi}`\n\n"
+                f"મંજૂર કરવા માટે: `/approve_wd {req_id}`"
             )
             bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown")
 
@@ -652,26 +793,26 @@ def handle_ticket_callbacks(call):
         bot.answer_callback_query(call.id)
 
 # ==========================================
-# ૬. FLASK વેબ સર્વર, CRONJOB & WEBHOOKS
+# ૮. FLASK વેબ સર્વર, CRONJOB & WEBHOOKS
 # ==========================================
 app = Flask(__name__)
 
-# ૧. મુખ્ય હોમ રૂટ (Cronjob / Ping માટે 200 OK)
+# હોમ પેજ (200 OK)
 @app.route("/", methods=["GET", "HEAD"])
 def root_check():
     return jsonify({
         "status": "ok",
         "code": 200,
-        "message": "Lottery Engine is Active and Running"
+        "service": "Lucky Draw Bot Server Running"
     }), 200
 
-# ૨. ક્રોનજોબ / Uptime સ્પેશિયલ પિંગ રૂટ (200 OK)
+# ક્રોનજોબ / Keep-Alive માટે સ્પેશિયલ પિંગ રૂટ્સ (200 OK)
 @app.route("/ping", methods=["GET", "HEAD"])
 @app.route("/health", methods=["GET", "HEAD"])
 def keep_alive():
     return "pong 200 OK", 200
 
-# ૩. ટેલિગ્રામ અપડેટ્સ માટે Webhook રૂટ
+# ટેલિગ્રામ વેબહૂક
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
     if request.headers.get("content-type") == "application/json":
@@ -681,7 +822,7 @@ def telegram_webhook():
         return "", 200
     return "Forbidden", 403
 
-# ૪. રેઝરપે પેમેન્ટ કન્ફર્મેશન Webhook રૂટ
+# રેઝરપે પેમેન્ટ કન્ફર્મેશન વેબહૂક
 @app.route("/razorpay-webhook", methods=["POST"])
 def razorpay_webhook():
     signature = request.headers.get("X-Razorpay-Signature", "")
