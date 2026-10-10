@@ -23,7 +23,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "")
 
-MONGO_URI = os.getenv("MONGO_URI", "")
+# MONGODB_URI અથવા MONGO_URI બંનેમાંથી જે મળે તે આપોઆપ લઈ લેશે
+MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI", "")
 DB_NAME = os.getenv("DB_NAME", "lottery_db")
 
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
@@ -337,7 +338,6 @@ def issue_ticket(telegram_id, amount_paid, payment_id="WALLET"):
     if user and user.get("has_first_referral_discount") and amount_paid == DISCOUNTED_PRICE:
         users_col.update_one({"telegram_id": telegram_id}, {"$set": {"has_first_referral_discount": False}})
 
-    # પ્રથમ ટિકિટ ખરીદી પર રેફરરને રિવોર્ડ આપવો
     user_tickets_count = tickets_col.count_documents({"telegram_id": telegram_id})
     ref_id = user.get("referred_by")
     
@@ -514,7 +514,7 @@ def handle_all_messages(message):
     m = MESSAGES[lang]
     text = message.text.strip()
 
-    # ટિકિટ ખરીદો
+    # ૧. ટિકિટ ખરીદો
     if text in [m["menu_buy"], "🎟️ ટિકિટ ખરીદો", "🎟️ टिकट खरीदें", "🎟️ Buy Ticket"]:
         total_sold = get_total_tickets_count()
         if total_sold >= TOTAL_TICKETS_LIMIT:
@@ -542,7 +542,7 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, prompt, parse_mode="Markdown", reply_markup=markup)
 
-    # મારી ટિકિટો
+    # ૨. મારી ટિકિટો
     elif text in [m["menu_my_tickets"], "📋 મારી ટિકિટો", "📋 मेरे टिकट", "📋 My Tickets"]:
         u_tickets = get_user_tickets(t_id)
         if not u_tickets:
@@ -555,7 +555,7 @@ def handle_all_messages(message):
             parse_mode="Markdown"
         )
 
-    # રેફરલ લિંક & ૧-ક્લિક સોશિયલ શેરિંગ
+    # ૩. રેફરલ લિંક & ૧-ક્લિક સોશિયલ શેરિંગ
     elif text in [m["menu_refer"], "🤝 રેફરલ લિંક", "🤝 रेफरल लिंक", "🤝 Referral Link"]:
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{t_id}"
         caption = m["share_caption"].format(link=ref_link)
@@ -574,7 +574,7 @@ def handle_all_messages(message):
         msg_body = m["refer_text"].format(link=ref_link, count=user.get("successful_referrals_count", 0))
         bot.send_message(message.chat.id, msg_body, parse_mode="Markdown", reply_markup=markup)
 
-    # વોલેટ
+    # ૪. મારું વોલેટ
     elif text in [m["menu_wallet"], "💰 મારું વોલેટ", "💰 मेरा वॉलेट", "💰 My Wallet"]:
         bal = user.get("wallet_balance", 0.0)
         markup = InlineKeyboardMarkup(row_width=1)
@@ -583,15 +583,15 @@ def handle_all_messages(message):
         msg_body = m["wallet_info"].format(bal=bal, count=user.get("successful_referrals_count", 0))
         bot.send_message(message.chat.id, msg_body, parse_mode="Markdown", reply_markup=markup)
 
-    # ઇનામ સૂચિ
+    # ૫. ઇનામ સૂચિ
     elif text in [m["menu_prizes"], "🏆 ઇનામ સૂચિ", "🏆 पुरस्कार सूची", "🏆 Prize List"]:
         bot.send_message(message.chat.id, m["prize_list"])
 
-    # ભાષા બદલો
+    # ૬. ભાષા બદલો
     elif text in [m["menu_lang"], "🌐 ભાષા બદલો", "🌐 भाषा बदलें", "🌐 Change Language"]:
         handle_lang_cmd(message)
 
-    # વિથડ્રોઅલ UPI ઇનપુટ
+    # ૭. વિથડ્રોઅલ UPI ઇનપુટ
     elif user_states.get(t_id) == "waiting_upi":
         upi = text.strip()
         if "@" not in upi or len(upi) < 5:
@@ -652,14 +652,26 @@ def handle_ticket_callbacks(call):
         bot.answer_callback_query(call.id)
 
 # ==========================================
-# ૬. FLASK વેબ સર્વર & WEBHOOKS
+# ૬. FLASK વેબ સર્વર, CRONJOB & WEBHOOKS
 # ==========================================
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def health_check():
-    return jsonify({"status": "running", "service": "Single-File Lottery Engine"}), 200
+# ૧. મુખ્ય હોમ રૂટ (Cronjob / Ping માટે 200 OK)
+@app.route("/", methods=["GET", "HEAD"])
+def root_check():
+    return jsonify({
+        "status": "ok",
+        "code": 200,
+        "message": "Lottery Engine is Active and Running"
+    }), 200
 
+# ૨. ક્રોનજોબ / Uptime સ્પેશિયલ પિંગ રૂટ (200 OK)
+@app.route("/ping", methods=["GET", "HEAD"])
+@app.route("/health", methods=["GET", "HEAD"])
+def keep_alive():
+    return "pong 200 OK", 200
+
+# ૩. ટેલિગ્રામ અપડેટ્સ માટે Webhook રૂટ
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
     if request.headers.get("content-type") == "application/json":
@@ -669,6 +681,7 @@ def telegram_webhook():
         return "", 200
     return "Forbidden", 403
 
+# ૪. રેઝરપે પેમેન્ટ કન્ફર્મેશન Webhook રૂટ
 @app.route("/razorpay-webhook", methods=["POST"])
 def razorpay_webhook():
     signature = request.headers.get("X-Razorpay-Signature", "")
