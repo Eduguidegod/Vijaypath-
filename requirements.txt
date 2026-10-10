@@ -1,3 +1,4 @@
+setuptools
 pyTelegramBotAPI==4.26.0
 Flask==3.1.0
 gunicorn==23.0.0
