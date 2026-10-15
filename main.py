@@ -20,10 +20,9 @@ import razorpay
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID = int(os.getenv("ADMIN_ID") or os.getenv("ADMIN_TELEGRAM_ID", "0"))
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").replace("@", "")
 
-# MONGODB_URI અથવા MONGO_URI બંનેમાંથી જે મળે તે આપોઆપ લેશે
 MONGO_URI = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI", "")
 DB_NAME = os.getenv("DB_NAME", "lottery_db")
 
@@ -37,6 +36,9 @@ REGULAR_PRICE = 50
 DISCOUNTED_PRICE = 25
 REFERRAL_BONUS = 25
 MIN_WITHDRAWAL = 100
+
+# સામાન્ય યુઝર્સને બતાવવા માટેનો બેઝ ઓફસેટ (૨૧,૪૫૦ થી શરૂ થશે)
+DISPLAY_TICKET_OFFSET = 21450
 
 # ==========================================
 # ૨. ત્રિભાષી મેસેજીસ (TRANSLATIONS)
@@ -437,7 +439,6 @@ def verify_webhook_signature(body_bytes, signature_header):
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 user_states = {}
 
-# ઓટો-ડિટેક્ટ યુઝરનેમ (જો Environment માં સેટ ન હોય તો જાતે મેળવી લેશે)
 def get_bot_username():
     global BOT_USERNAME
     if not BOT_USERNAME:
@@ -653,12 +654,14 @@ def handle_all_messages(message):
     m = MESSAGES[lang]
     text = message.text.strip()
 
-    # ૧. ટિકિટ ખરીદો
+    # ૧. ટિકિટ ખરીદો (અહીં યુઝરને ડિસ્પ્લે માટે ૨૧,૪૫૦ થી શરૂ થશે)
     if text in [m["menu_buy"], "🎟️ ટિકિટ ખરીદો", "🎟️ टिकट खरीदें", "🎟️ Buy Ticket"]:
         total_sold = get_total_tickets_count()
         if total_sold >= TOTAL_TICKETS_LIMIT:
             bot.send_message(message.chat.id, m["sold_out"])
             return
+
+        display_sold = min(total_sold + DISPLAY_TICKET_OFFSET, TOTAL_TICKETS_LIMIT)
 
         user_tickets = get_user_tickets(t_id)
         if len(user_tickets) >= MAX_TICKETS_PER_USER:
@@ -676,7 +679,7 @@ def handle_all_messages(message):
 
         prompt = m["buy_prompt"].format(
             user_count=len(user_tickets),
-            total_sold=total_sold,
+            total_sold=f"{display_sold:,}",
             price_text=cost_text
         )
         bot.send_message(message.chat.id, prompt, parse_mode="Markdown", reply_markup=markup)
@@ -694,7 +697,7 @@ def handle_all_messages(message):
             parse_mode="Markdown"
         )
 
-    # ૩. રેફરલ લિંક & સોશિયલ શેરિંગ (સાચા યુઝરનેમ સાથે)
+    # ૩. રેફરલ લિંક & સોશિયલ શેરિંગ
     elif text in [m["menu_refer"], "🤝 રેફરલ લિંક", "🤝 रेफरल लिंक", "🤝 Referral Link"]:
         b_name = get_bot_username()
         ref_link = f"https://t.me/{b_name}?start=ref_{t_id}"
@@ -797,7 +800,6 @@ def handle_ticket_callbacks(call):
 # ==========================================
 app = Flask(__name__)
 
-# હોમ પેજ (200 OK)
 @app.route("/", methods=["GET", "HEAD"])
 def root_check():
     return jsonify({
@@ -806,13 +808,11 @@ def root_check():
         "service": "Lucky Draw Bot Server Running"
     }), 200
 
-# ક્રોનજોબ / Keep-Alive માટે સ્પેશિયલ પિંગ રૂટ્સ (200 OK)
 @app.route("/ping", methods=["GET", "HEAD"])
 @app.route("/health", methods=["GET", "HEAD"])
 def keep_alive():
     return "pong 200 OK", 200
 
-# ટેલિગ્રામ વેબહૂક
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
     if request.headers.get("content-type") == "application/json":
@@ -822,7 +822,6 @@ def telegram_webhook():
         return "", 200
     return "Forbidden", 403
 
-# રેઝરપે પેમેન્ટ કન્ફર્મેશન વેબહૂક
 @app.route("/razorpay-webhook", methods=["POST"])
 def razorpay_webhook():
     signature = request.headers.get("X-Razorpay-Signature", "")
